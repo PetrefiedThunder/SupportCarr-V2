@@ -1,0 +1,578 @@
+openapi: 3.1.0
+info:
+  title: SupportCarr API
+  version: 1.0.0
+  description: |
+    **SupportCarr Platform API**
+
+    Nation-scale on-demand rescue and utility vehicle platform for e-bikes and micromobility.
+
+    ## Authentication
+
+    Most endpoints require authentication using JWT Bearer tokens.
+
+    ```
+    Authorization: Bearer <your_access_token>
+    ```
+
+    ## Rate Limiting
+
+    - General API: 100 requests per 15 minutes
+    - Authentication: 5 attempts per 15 minutes
+    - SMS: 3 requests per hour
+
+  contact:
+    name: SupportCarr API Support
+    email: api@supportcarr.com
+    url: https://supportcarr.com/support
+  license:
+    name: Proprietary
+    url: https://supportcarr.com/terms
+
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Local development
+  - url: https://staging.supportcarr.com/api/v1
+    description: Staging
+  - url: https://api.supportcarr.com/v1
+    description: Production
+
+tags:
+  - name: Authentication
+    description: User authentication and authorization
+  - name: Users
+    description: User management
+  - name: Rescues
+    description: Rescue request operations
+  - name: Drivers
+    description: Driver-specific operations
+  - name: Payments
+    description: Payment processing
+  - name: Notifications
+    description: Notification management
+  - name: Admin
+    description: Administrative operations
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        phoneNumber:
+          type: string
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        role:
+          type: string
+          enum: [rider, driver, admin, support]
+        avatar:
+          type: string
+          format: uri
+        isPhoneVerified:
+          type: boolean
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    RescueRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        riderId:
+          type: string
+        driverId:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - accepted
+            - driver_enroute
+            - driver_arrived
+            - in_progress
+            - completed
+            - cancelled_by_rider
+            - cancelled_by_driver
+        pickupLocation:
+          $ref: '#/components/schemas/Location'
+        dropoffLocation:
+          $ref: '#/components/schemas/Location'
+        pricing:
+          $ref: '#/components/schemas/Pricing'
+        createdAt:
+          type: string
+          format: date-time
+
+    Location:
+      type: object
+      required:
+        - address
+        - latitude
+        - longitude
+      properties:
+        address:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        notes:
+          type: string
+
+    Pricing:
+      type: object
+      properties:
+        basePrice:
+          type: number
+        distancePrice:
+          type: number
+        surgeMultiplier:
+          type: number
+        subtotal:
+          type: number
+        discount:
+          type: number
+        total:
+          type: number
+        driverPayout:
+          type: number
+
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+        errors:
+          type: object
+
+    Success:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+        data:
+          type: object
+
+paths:
+  /auth/signup:
+    post:
+      tags:
+        - Authentication
+      summary: Register new user
+      description: Create a new user account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phoneNumber
+                - password
+              properties:
+                phoneNumber:
+                  type: string
+                  example: "+15555551234"
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                email:
+                  type: string
+                  format: email
+                firstName:
+                  type: string
+                lastName:
+                  type: string
+                role:
+                  type: string
+                  enum: [rider, driver]
+                  default: rider
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          user:
+                            $ref: '#/components/schemas/User'
+                          accessToken:
+                            type: string
+                          refreshToken:
+                            type: string
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Phone number already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/signin:
+    post:
+      tags:
+        - Authentication
+      summary: Sign in user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phoneNumber
+                - password
+              properties:
+                phoneNumber:
+                  type: string
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Signed in successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/verify:
+    post:
+      tags:
+        - Authentication
+      summary: Verify phone number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phoneNumber
+                - code
+              properties:
+                phoneNumber:
+                  type: string
+                code:
+                  type: string
+                  minLength: 4
+                  maxLength: 6
+      responses:
+        '200':
+          description: Phone verified successfully
+        '400':
+          description: Invalid verification code
+
+  /auth/me:
+    get:
+      tags:
+        - Authentication
+      summary: Get current user
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current user data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          user:
+                            $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+
+  /rescues:
+    get:
+      tags:
+        - Rescues
+      summary: Get all rescues for current user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, accepted, completed, cancelled]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: List of rescues
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+
+    post:
+      tags:
+        - Rescues
+      summary: Create rescue request
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - pickupLocation
+                - dropoffLocation
+                - issue
+              properties:
+                pickupLocation:
+                  $ref: '#/components/schemas/Location'
+                dropoffLocation:
+                  $ref: '#/components/schemas/Location'
+                issue:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                      enum: [flat_tire, dead_battery, mechanical_failure, accident, other]
+                    description:
+                      type: string
+                ebike:
+                  type: object
+                  properties:
+                    make:
+                      type: string
+                    model:
+                      type: string
+                    color:
+                      type: string
+                promoCode:
+                  type: string
+      responses:
+        '201':
+          description: Rescue created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+
+  /rescues/{id}:
+    get:
+      tags:
+        - Rescues
+      summary: Get rescue by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Rescue details
+        '404':
+          description: Rescue not found
+
+  /rescues/{id}/cancel:
+    post:
+      tags:
+        - Rescues
+      summary: Cancel rescue
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Rescue cancelled
+        '400':
+          description: Cannot cancel rescue
+
+  /drivers/profile:
+    get:
+      tags:
+        - Drivers
+      summary: Get driver profile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Driver profile
+
+    post:
+      tags:
+        - Drivers
+      summary: Create driver profile
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - licenseNumber
+                - licenseState
+                - licenseExpiryDate
+              properties:
+                licenseNumber:
+                  type: string
+                licenseState:
+                  type: string
+                  minLength: 2
+                  maxLength: 2
+                licenseExpiryDate:
+                  type: string
+                  format: date
+      responses:
+        '201':
+          description: Driver profile created
+
+  /drivers/location:
+    post:
+      tags:
+        - Drivers
+      summary: Update driver location
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - latitude
+                - longitude
+              properties:
+                latitude:
+                  type: number
+                longitude:
+                  type: number
+      responses:
+        '200':
+          description: Location updated
+
+  /notifications:
+    get:
+      tags:
+        - Notifications
+      summary: Get user notifications
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of notifications
+
+  /notifications/{id}/read:
+    put:
+      tags:
+        - Notifications
+      summary: Mark notification as read
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Marked as read
+
+  /admin/stats:
+    get:
+      tags:
+        - Admin
+      summary: Get platform statistics
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Platform stats
+        '403':
+          description: Forbidden - Admin only

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: supportcarr
+description: SupportCarr Platform - On-demand rescue for e-bikes
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - supportcarr
+  - rescue
+  - micromobility
+  - ebike
+maintainers:
+  - name: SupportCarr Team
+    email: devops@supportcarr.com
+sources:
+  - https://github.com/PetrefiedThunder/SupportCarr-V2
