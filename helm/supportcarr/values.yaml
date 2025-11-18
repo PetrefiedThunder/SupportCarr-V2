@@ -1,0 +1,125 @@
+## @section Global parameters
+global:
+  environment: production
+
+## @section API Configuration
+api:
+  replicaCount: 3
+  image:
+    repository: supportcarr/api
+    tag: latest
+    pullPolicy: Always
+
+  service:
+    type: LoadBalancer
+    port: 80
+    targetPort: 3000
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPU: 70
+    targetMemory: 80
+
+  env:
+    NODE_ENV: production
+    PORT: "3000"
+
+## @section Worker Configuration
+worker:
+  replicaCount: 2
+  image:
+    repository: supportcarr/api
+    tag: latest
+    pullPolicy: Always
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+## @section MongoDB Configuration
+mongodb:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: mongo
+    tag: "6"
+
+  persistence:
+    enabled: true
+    size: 20Gi
+
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+
+## @section Redis Configuration
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+
+  persistence:
+    enabled: true
+    size: 10Gi
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+## @section Ingress Configuration
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+
+  hosts:
+    - host: api.supportcarr.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+  tls:
+    - secretName: supportcarr-tls
+      hosts:
+        - api.supportcarr.com
+
+## @section Secrets
+secrets:
+  mongodb:
+    username: admin
+    password: ""  # Set via --set or secrets file
+
+  app:
+    jwtSecret: ""
+    jwtRefreshSecret: ""
+    encryptionKey: ""
+    twilioAccountSid: ""
+    twilioAuthToken: ""
+    stripeSecretKey: ""
+    mongodbUri: ""

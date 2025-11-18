@@ -8,6 +8,9 @@ import PaymentRecord from './PaymentRecord.js';
 import Rating from './Rating.js';
 import Notification from './Notification.js';
 import APIKey from './APIKey.js';
+import PromoCode from './PromoCode.js';
+import Referral from './Referral.js';
+import ChatMessage from './ChatMessage.js';
 
 export {
   User,
@@ -19,6 +22,9 @@ export {
   Rating,
   Notification,
   APIKey,
+  PromoCode,
+  Referral,
+  ChatMessage,
 };
 
 export default {
@@ -31,4 +37,7 @@ export default {
   Rating,
   Notification,
   APIKey,
+  PromoCode,
+  Referral,
+  ChatMessage,
 };

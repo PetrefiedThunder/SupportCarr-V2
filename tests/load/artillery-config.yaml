@@ -1,0 +1,99 @@
+config:
+  target: "http://localhost:3000"
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm up"
+    - duration: 120
+      arrivalRate: 10
+      name: "Sustained load"
+    - duration: 60
+      arrivalRate: 20
+      name: "Peak load"
+  defaults:
+    headers:
+      Content-Type: "application/json"
+  processor: "./artillery-processor.js"
+  variables:
+    phoneBase: "+1555555"
+
+scenarios:
+  - name: "Health Check Flow"
+    weight: 30
+    flow:
+      - get:
+          url: "/health"
+          expect:
+            - statusCode: 200
+            - contentType: json
+
+  - name: "Authentication Flow"
+    weight: 40
+    flow:
+      - post:
+          url: "/api/v1/auth/signin"
+          json:
+            phoneNumber: "{{ phoneBase }}0001"
+            password: "Test123!"
+          capture:
+            - json: "$.data.accessToken"
+              as: "authToken"
+          expect:
+            - statusCode:
+                - 200
+                - 401
+
+      - get:
+          url: "/api/v1/auth/me"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode:
+                - 200
+                - 401
+
+  - name: "Rescue Creation Flow"
+    weight: 30
+    flow:
+      - post:
+          url: "/api/v1/auth/signin"
+          json:
+            phoneNumber: "{{ phoneBase }}0001"
+            password: "Test123!"
+          capture:
+            - json: "$.data.accessToken"
+              as: "authToken"
+
+      - post:
+          url: "/api/v1/rescues"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            pickupLocation:
+              address: "123 Main St, San Francisco, CA"
+              latitude: 37.7749
+              longitude: -122.4194
+            dropoffLocation:
+              address: "456 Market St, San Francisco, CA"
+              latitude: 37.7849
+              longitude: -122.4094
+            issue:
+              type: "flat_tire"
+              description: "Flat tire on front wheel"
+          capture:
+            - json: "$.data.rescue.id"
+              as: "rescueId"
+          expect:
+            - statusCode:
+                - 201
+                - 401
+
+      - get:
+          url: "/api/v1/rescues/{{ rescueId }}"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode:
+                - 200
+                - 401
+                - 404
