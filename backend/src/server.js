@@ -16,6 +16,8 @@ import database from './config/database.js';
 import logger from './utils/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { generalLimiter } from './middleware/rateLimiter.js';
+import { createApolloServer } from './graphql/index.js';
+import metricsService from './services/metricsService.js';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -25,6 +27,12 @@ import driverRoutes from './routes/driver.js';
 import paymentRoutes from './routes/payment.js';
 import notificationRoutes from './routes/notification.js';
 import adminRoutes from './routes/admin.js';
+import locationRoutes from './routes/location.js';
+import analyticsRoutes from './routes/analytics.js';
+import metricsRoutes from './routes/metrics.js';
+
+// Import socket handlers
+import { registerLocationHandlers } from './sockets/locationHandlers.js';
 
 // Initialize express app
 const app = express();
@@ -85,6 +93,9 @@ if (config.env !== 'test') {
 // Rate limiting
 app.use('/api/', generalLimiter);
 
+// Prometheus metrics tracking
+app.use(metricsService.trackHttpRequest());
+
 // Health check
 app.get('/health', (req, res) => {
   res.status(200).json({
@@ -132,6 +143,11 @@ app.use('/api/v1/drivers', driverRoutes);
 app.use('/api/v1/payments', paymentRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/location', locationRoutes);
+app.use('/api/v1/analytics', analyticsRoutes);
+
+// Metrics endpoint (outside /api/v1 for Prometheus)
+app.use('/metrics', metricsRoutes);
 
 // API documentation
 app.get('/api-docs', (req, res) => {
@@ -164,9 +180,10 @@ io.on('connection', (socket) => {
       socket.userId = decoded.userId;
       socket.join(`user:${decoded.userId}`);
       logger.info('Socket authenticated', { userId: decoded.userId });
+      socket.emit('authenticated', { userId: decoded.userId });
     } catch (error) {
       logger.error('Socket authentication failed:', error);
-      socket.emit('auth_error', { message: 'Authentication failed' });
+      socket.emit('unauthorized', { message: 'Authentication failed' });
       socket.disconnect();
     }
   });
@@ -175,6 +192,9 @@ io.on('connection', (socket) => {
     socket.join(`rescue:${rescueId}`);
     logger.info('Socket joined rescue tracking', { rescueId });
   });
+
+  // Register location tracking handlers
+  registerLocationHandlers(io, socket);
 
   socket.on('disconnect', () => {
     logger.info('Socket client disconnected', { socketId: socket.id });
@@ -191,11 +211,18 @@ const startServer = async () => {
     await database.connect();
     logger.info('Database connected successfully');
 
+    // Initialize Apollo GraphQL Server
+    const apolloServer = createApolloServer();
+    await apolloServer.start();
+    apolloServer.applyMiddleware({ app, path: '/graphql' });
+    logger.info('GraphQL server initialized at /graphql');
+
     // Start server
     const PORT = config.port;
     server.listen(PORT, () => {
       logger.info(`Server running on port ${PORT} in ${config.env} mode`);
       logger.info(`API documentation available at http://localhost:${PORT}/api-docs`);
+      logger.info(`GraphQL playground available at http://localhost:${PORT}/graphql`);
     });
   } catch (error) {
     logger.error('Failed to start server:', error);
