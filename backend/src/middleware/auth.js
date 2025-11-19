@@ -20,6 +20,17 @@ export const authenticate = async (req, res, next) => {
 
     const token = authHeader.substring(7);
 
+    // Check if token is blacklisted
+    const { isTokenBlacklisted } = await import('../utils/jwt.js');
+    const blacklisted = await isTokenBlacklisted(token);
+
+    if (blacklisted) {
+      return res.status(401).json({
+        success: false,
+        error: 'Token has been revoked',
+      });
+    }
+
     // Verify token
     const decoded = jwt.verify(token, config.jwt.secret);
 
@@ -51,9 +62,9 @@ export const authenticate = async (req, res, next) => {
     req.user = user;
     req.userId = user._id.toString();
 
-    // Update last active
-    user.lastActiveAt = new Date();
-    await user.save();
+    // Update last active asynchronously without blocking request
+    User.findByIdAndUpdate(user._id, { lastActiveAt: new Date() }, { new: false })
+      .catch((err) => logger.error('Failed to update lastActiveAt:', err));
 
     next();
   } catch (error) {
