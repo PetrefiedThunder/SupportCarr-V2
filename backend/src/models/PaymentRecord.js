@@ -135,47 +135,121 @@ paymentRecordSchema.virtual('driver', {
   justOne: true,
 });
 
-// Instance methods
+// Instance methods - use atomic updates to prevent race conditions
 paymentRecordSchema.methods.markAsSucceeded = function (stripeData = {}) {
-  this.status = 'succeeded';
-  this.processedAt = new Date();
+  // Validate state transition
+  const validFromStates = ['pending', 'processing'];
+  if (!validFromStates.includes(this.status)) {
+    throw new Error(`Cannot mark as succeeded from status: ${this.status}`);
+  }
+
+  const updateData = {
+    status: 'succeeded',
+    processedAt: new Date(),
+  };
+
   if (stripeData.chargeId) {
-    this.stripe.chargeId = stripeData.chargeId;
+    updateData['stripe.chargeId'] = stripeData.chargeId;
   }
   if (stripeData.receiptUrl) {
-    this.receiptUrl = stripeData.receiptUrl;
+    updateData.receiptUrl = stripeData.receiptUrl;
   }
-  return this.save();
+
+  // Use atomic update with state validation
+  return this.constructor.findOneAndUpdate(
+    {
+      _id: this._id,
+      status: { $in: validFromStates },
+    },
+    { $set: updateData },
+    { new: true }
+  ).then((doc) => {
+    if (!doc) {
+      throw new Error('Payment record state transition failed - invalid current state');
+    }
+    Object.assign(this, doc.toObject());
+    return this;
+  });
 };
 
 paymentRecordSchema.methods.markAsFailed = function (errorCode, errorMessage) {
-  this.status = 'failed';
-  this.failureReason = {
-    code: errorCode,
-    message: errorMessage,
-  };
-  this.processedAt = new Date();
-  return this.save();
+  // Validate state transition
+  const validFromStates = ['pending', 'processing'];
+  if (!validFromStates.includes(this.status)) {
+    throw new Error(`Cannot mark as failed from status: ${this.status}`);
+  }
+
+  return this.constructor.findOneAndUpdate(
+    {
+      _id: this._id,
+      status: { $in: validFromStates },
+    },
+    {
+      $set: {
+        status: 'failed',
+        'failureReason.code': errorCode,
+        'failureReason.message': errorMessage,
+        processedAt: new Date(),
+      },
+    },
+    { new: true }
+  ).then((doc) => {
+    if (!doc) {
+      throw new Error('Payment record state transition failed - invalid current state');
+    }
+    Object.assign(this, doc.toObject());
+    return this;
+  });
 };
 
 paymentRecordSchema.methods.processRefund = function (amount, reason) {
-  this.status = 'refunded';
-  this.refund = {
-    amount,
-    reason,
-    refundedAt: new Date(),
-  };
-  return this.save();
+  // Can only refund succeeded payments
+  if (this.status !== 'succeeded') {
+    throw new Error(`Cannot refund payment with status: ${this.status}`);
+  }
+
+  return this.constructor.findOneAndUpdate(
+    {
+      _id: this._id,
+      status: 'succeeded',
+    },
+    {
+      $set: {
+        status: 'refunded',
+        'refund.amount': amount,
+        'refund.reason': reason,
+        'refund.refundedAt': new Date(),
+      },
+    },
+    { new: true }
+  ).then((doc) => {
+    if (!doc) {
+      throw new Error('Payment record state transition failed - already refunded or invalid state');
+    }
+    Object.assign(this, doc.toObject());
+    return this;
+  });
 };
 
 paymentRecordSchema.methods.processPayout = function (amount, stripePayoutId) {
-  this.payout = {
-    amount,
-    status: 'paid',
-    paidAt: new Date(),
-    stripePayoutId,
-  };
-  return this.save();
+  return this.constructor.findOneAndUpdate(
+    { _id: this._id },
+    {
+      $set: {
+        'payout.amount': amount,
+        'payout.status': 'paid',
+        'payout.paidAt': new Date(),
+        'payout.stripePayoutId': stripePayoutId,
+      },
+    },
+    { new: true }
+  ).then((doc) => {
+    if (!doc) {
+      throw new Error('Failed to process payout - payment record not found');
+    }
+    Object.assign(this, doc.toObject());
+    return this;
+  });
 };
 
 // Static methods
