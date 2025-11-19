@@ -1,0 +1,148 @@
+global:
+  resolve_timeout: 5m
+  # SMTP configuration for email alerts
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'alerts@supportcarr.com'
+  smtp_auth_username: 'alerts@supportcarr.com'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  smtp_require_tls: true
+
+# The root route on which each incoming alert enters
+route:
+  # Default receiver
+  receiver: 'team-alerts'
+
+  # How long to wait before sending a notification again if it has already been sent
+  repeat_interval: 3h
+
+  # How long to wait to buffer alerts of the same group before sending
+  group_wait: 10s
+
+  # How long to wait before sending an alert that has been added to a group
+  group_interval: 10s
+
+  # Labels to group by
+  group_by: ['alertname', 'cluster', 'service']
+
+  # Child routes
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      repeat_interval: 15m
+      continue: true
+
+    # Warning alerts - less frequent
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      repeat_interval: 1h
+
+    # Database alerts
+    - match:
+        component: database
+      receiver: 'database-team'
+      repeat_interval: 30m
+
+    # Payment system alerts
+    - match:
+        component: payment
+      receiver: 'payment-team'
+      repeat_interval: 15m
+
+# Notification receivers
+receivers:
+  - name: 'team-alerts'
+    email_configs:
+      - to: 'team@supportcarr.com'
+        headers:
+          Subject: '[SupportCarr] {{ .GroupLabels.alertname }}'
+        html: |
+          <h2>Alert: {{ .GroupLabels.alertname }}</h2>
+          <p><strong>Summary:</strong> {{ .CommonAnnotations.summary }}</p>
+          <p><strong>Description:</strong> {{ .CommonAnnotations.description }}</p>
+          <p><strong>Severity:</strong> {{ .CommonLabels.severity }}</p>
+          <p><strong>Time:</strong> {{ .StartsAt }}</p>
+
+    # Slack webhook (optional)
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#alerts'
+        title: 'SupportCarr Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+
+  - name: 'critical-alerts'
+    email_configs:
+      - to: 'oncall@supportcarr.com,team@supportcarr.com'
+        headers:
+          Subject: '🚨 [CRITICAL] {{ .GroupLabels.alertname }}'
+        html: |
+          <h1 style="color: red;">🚨 CRITICAL ALERT</h1>
+          <h2>{{ .GroupLabels.alertname }}</h2>
+          <p><strong>Summary:</strong> {{ .CommonAnnotations.summary }}</p>
+          <p><strong>Description:</strong> {{ .CommonAnnotations.description }}</p>
+          <p><strong>Time:</strong> {{ .StartsAt }}</p>
+          <p><strong>Action Required:</strong> Immediate investigation needed</p>
+
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#critical-alerts'
+        title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+        color: 'danger'
+
+    # PagerDuty integration (optional)
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        description: '{{ .GroupLabels.alertname }}: {{ .CommonAnnotations.summary }}'
+
+  - name: 'warning-alerts'
+    email_configs:
+      - to: 'team@supportcarr.com'
+        headers:
+          Subject: '⚠️ [WARNING] {{ .GroupLabels.alertname }}'
+        html: |
+          <h2 style="color: orange;">⚠️ WARNING</h2>
+          <h3>{{ .GroupLabels.alertname }}</h3>
+          <p><strong>Summary:</strong> {{ .CommonAnnotations.summary }}</p>
+          <p><strong>Description:</strong> {{ .CommonAnnotations.description }}</p>
+          <p><strong>Time:</strong> {{ .StartsAt }}</p>
+
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#alerts'
+        title: '⚠️ WARNING: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+        color: 'warning'
+
+  - name: 'database-team'
+    email_configs:
+      - to: 'database-team@supportcarr.com'
+        headers:
+          Subject: '[Database] {{ .GroupLabels.alertname }}'
+
+  - name: 'payment-team'
+    email_configs:
+      - to: 'payment-team@supportcarr.com'
+        headers:
+          Subject: '[Payment] {{ .GroupLabels.alertname }}'
+
+# Inhibition rules - suppress certain alerts when others are firing
+inhibit_rules:
+  # Inhibit warning if critical is firing
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ['alertname', 'instance']
+
+  # Inhibit database warnings if database is down
+  - source_match:
+      alertname: DatabaseDown
+    target_match_re:
+      alertname: Database.*
+    equal: ['instance']

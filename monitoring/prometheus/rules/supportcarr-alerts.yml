@@ -1,0 +1,282 @@
+groups:
+  - name: supportcarr_api
+    interval: 30s
+    rules:
+      # High error rate
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "High API error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      # Slow response time
+      - alert: SlowResponseTime
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "API response time is slow"
+          description: "95th percentile response time for {{ $labels.route }} is {{ $value }}s"
+
+      # API down
+      - alert: APIDown
+        expr: up{job="supportcarr-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "SupportCarr API is down"
+          description: "API instance {{ $labels.instance }} has been down for more than 1 minute"
+
+  - name: supportcarr_business
+    interval: 1m
+    rules:
+      # No active drivers
+      - alert: NoActiveDrivers
+        expr: supportcarr_online_drivers == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "No drivers are online"
+          description: "There have been no online drivers for 5 minutes"
+
+      # High number of pending rescues
+      - alert: HighPendingRescues
+        expr: supportcarr_rescues_by_status{status="pending"} > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "High number of pending rescues"
+          description: "{{ $value }} rescues are waiting to be accepted"
+
+      # Low driver availability
+      - alert: LowDriverAvailability
+        expr: |
+          supportcarr_online_drivers
+          /
+          (supportcarr_online_drivers + supportcarr_rescues_by_status{status=~"accepted|driver_enroute|in_progress"})
+          < 0.3
+        for: 10m
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "Low driver availability"
+          description: "Driver to active rescue ratio is {{ $value | humanizePercentage }}"
+
+      # Payment success rate drop
+      - alert: LowPaymentSuccessRate
+        expr: supportcarr_payment_success_rate < 90
+        for: 15m
+        labels:
+          severity: critical
+          component: payment
+        annotations:
+          summary: "Payment success rate is low"
+          description: "Payment success rate is {{ $value }}% (threshold: 90%)"
+
+  - name: supportcarr_infrastructure
+    interval: 30s
+    rules:
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes
+          )
+          /
+          node_memory_MemTotal_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+
+      # Disk space low
+      - alert: DiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/"}
+            /
+            node_filesystem_size_bytes{mountpoint="/"}
+          ) < 0.15
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Disk space is running low"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining on {{ $labels.instance }}"
+
+      # Disk space critical
+      - alert: DiskSpaceCritical
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/"}
+            /
+            node_filesystem_size_bytes{mountpoint="/"}
+          ) < 0.05
+        for: 1m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Disk space is critically low"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining on {{ $labels.instance }}"
+
+  - name: supportcarr_database
+    interval: 1m
+    rules:
+      # MongoDB down
+      - alert: MongoDBDown
+        expr: up{job="mongodb"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "MongoDB is down"
+          description: "MongoDB instance {{ $labels.instance }} is unreachable"
+
+      # Redis down
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Redis is down"
+          description: "Redis instance {{ $labels.instance }} is unreachable"
+
+      # Slow database queries
+      - alert: SlowDatabaseQueries
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(db_query_duration_seconds_bucket[5m])) by (le, operation)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Database queries are slow"
+          description: "95th percentile query time for {{ $labels.operation }} is {{ $value }}s"
+
+      # High Redis memory usage
+      - alert: HighRedisMemory
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Redis memory usage is high"
+          description: "Redis memory usage is {{ $value | humanizePercentage }}"
+
+  - name: supportcarr_jobs
+    interval: 1m
+    rules:
+      # High job queue size
+      - alert: HighJobQueueSize
+        expr: job_queue_size > 100
+        for: 10m
+        labels:
+          severity: warning
+          component: jobs
+        annotations:
+          summary: "Job queue size is high"
+          description: "{{ $labels.queue }} queue has {{ $value }} jobs pending"
+
+      # High job failure rate
+      - alert: HighJobFailureRate
+        expr: |
+          (
+            sum(rate(job_processing_total{status="failed"}[5m])) by (queue)
+            /
+            sum(rate(job_processing_total[5m])) by (queue)
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          component: jobs
+        annotations:
+          summary: "High job failure rate"
+          description: "{{ $labels.queue }} queue has {{ $value | humanizePercentage }} failure rate"
+
+      # Slow job processing
+      - alert: SlowJobProcessing
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(job_processing_duration_seconds_bucket[5m])) by (le, queue, job_name)
+          ) > 300
+        for: 15m
+        labels:
+          severity: warning
+          component: jobs
+        annotations:
+          summary: "Jobs are processing slowly"
+          description: "{{ $labels.job_name }} in {{ $labels.queue }} taking {{ $value }}s at p95"
+
+  - name: supportcarr_websockets
+    interval: 1m
+    rules:
+      # WebSocket connection spike
+      - alert: WebSocketConnectionSpike
+        expr: |
+          (
+            websocket_connections_total
+            /
+            websocket_connections_total offset 10m
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: websocket
+        annotations:
+          summary: "WebSocket connections spiked"
+          description: "WebSocket connections increased by {{ $value }}x in 10 minutes"
+
+      # Too many WebSocket connections
+      - alert: TooManyWebSocketConnections
+        expr: websocket_connections_total > 10000
+        for: 5m
+        labels:
+          severity: warning
+          component: websocket
+        annotations:
+          summary: "High number of WebSocket connections"
+          description: "{{ $value }} active WebSocket connections"

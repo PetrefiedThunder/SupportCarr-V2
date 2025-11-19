@@ -196,6 +196,9 @@ const rescueRequestSchema = new Schema(
     acceptedAt: {
       type: Date,
     },
+    estimatedArrival: {
+      type: Date,
+    },
     pickedUpAt: {
       type: Date,
     },

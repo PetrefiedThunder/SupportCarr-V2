@@ -56,7 +56,7 @@ class AnalyticsService {
         },
         revenue: {
           total: totalRevenue,
-          today: await this.getRevenueTod ay(),
+          today: await this.getRevenueToday(),
         },
         rating: {
           average: avgRating,

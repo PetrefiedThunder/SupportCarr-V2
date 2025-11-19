@@ -83,6 +83,10 @@ const driverProfileSchema = new Schema(
       type: Boolean,
       default: false,
     },
+    isOnline: {
+      type: Boolean,
+      default: false,
+    },
     currentLocation: {
       type: {
         type: String,
@@ -96,6 +100,15 @@ const driverProfileSchema = new Schema(
     },
     lastLocationUpdate: {
       type: Date,
+    },
+    heading: {
+      type: Number, // 0-360 degrees
+      min: 0,
+      max: 360,
+    },
+    speed: {
+      type: Number, // km/h
+      min: 0,
     },
     serviceArea: {
       city: String,
@@ -145,6 +158,10 @@ const driverProfileSchema = new Schema(
       totalEarnings: {
         type: Number,
         default: 0,
+      },
+      totalActiveHours: {
+        type: Number,
+        default: 0, // hours
       },
     },
     preferences: {
@@ -213,9 +230,11 @@ const driverProfileSchema = new Schema(
 // Indexes
 driverProfileSchema.index({ userId: 1 });
 driverProfileSchema.index({ isAvailable: 1 });
+driverProfileSchema.index({ isOnline: 1 });
 driverProfileSchema.index({ currentLocation: '2dsphere' });
 driverProfileSchema.index({ 'rating.average': -1 });
 driverProfileSchema.index({ backgroundCheckStatus: 1 });
+driverProfileSchema.index({ lastLocationUpdate: -1 });
 
 // Virtual for user
 driverProfileSchema.virtual('user', {
