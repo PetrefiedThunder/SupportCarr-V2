@@ -106,12 +106,27 @@ npm install
 # Backend
 cd backend
 cp .env.example .env
-# Edit .env with your credentials
+# The .env.example contains MOCK API keys for demo/development
+# For production, replace with real credentials
 
 # Frontend
 cd ../frontend
-cp .env.example .env
+cp .env.example .env.local
+# Update VITE_MAPBOX_TOKEN with real token for maps to work
 ```
+
+**Note**: The `.env.example` files include realistic-looking **mock API keys** that allow you to:
+- Start the application immediately without configuring external services
+- Run demos and development without exposing real credentials
+- Understand the required format for each service's credentials
+
+**For full functionality**, replace mock values with real credentials:
+- **Stripe**: Get test keys from https://dashboard.stripe.com/test/apikeys
+- **Twilio**: Get credentials from https://console.twilio.com/
+- **Mapbox**: Get access token from https://account.mapbox.com/
+- **AWS S3**: Create IAM user with S3 access
+- **Sentry**: Create project at https://sentry.io/
+- See [Environment Variables](#environment-variables) section for complete list
 
 4. **Start MongoDB and Redis**
 ```bash
