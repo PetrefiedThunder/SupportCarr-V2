@@ -41,12 +41,20 @@ const context = async ({ req, connection }) => {
  * Initialize Apollo Server
  */
 export const createApolloServer = () => {
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+
   return new ApolloServer({
     typeDefs,
     resolvers,
     context,
     formatError: (error) => {
       logger.error('GraphQL Error:', error);
+
+      // Hide error details in production
+      if (!isDevelopment) {
+        return new Error('Internal server error');
+      }
+
       return error;
     },
     subscriptions: {
@@ -69,12 +77,8 @@ export const createApolloServer = () => {
         logger.info('GraphQL subscription disconnected');
       },
     },
-    playground: {
-      settings: {
-        'request.credentials': 'include',
-      },
-    },
-    introspection: true,
+    playground: isDevelopment,
+    introspection: isDevelopment,
   });
 };
 
