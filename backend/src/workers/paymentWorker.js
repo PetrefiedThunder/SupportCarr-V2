@@ -209,15 +209,25 @@ async function processWeeklyPayouts() {
 async function retryFailedPayment(data) {
   const { paymentRecordId } = data;
 
-  const paymentRecord = await PaymentRecord.findById(paymentRecordId);
+  // Use atomic update to prevent race condition when retrying
+  const paymentRecord = await PaymentRecord.findOneAndUpdate(
+    {
+      _id: paymentRecordId,
+      status: 'failed', // Only retry if status is failed
+    },
+    {
+      $set: {
+        status: 'processing',
+        'failureReason.code': null,
+        'failureReason.message': null,
+      },
+    },
+    { new: true }
+  );
 
-  if (!paymentRecord || paymentRecord.status !== 'failed') {
+  if (!paymentRecord) {
     throw new Error('Payment record not found or not in failed state');
   }
-
-  // Reset status and retry
-  paymentRecord.status = 'processing';
-  await paymentRecord.save();
 
   return await processChargeCustomer({
     rescueId: paymentRecord.rescueRequestId,
