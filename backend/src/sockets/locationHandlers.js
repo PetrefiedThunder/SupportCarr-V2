@@ -87,7 +87,37 @@ export const registerLocationHandlers = (io, socket) => {
         return;
       }
 
-      // TODO: Verify rider has active rescue with this driver
+      // Verify rider has active rescue with this driver
+      if (!rescueId) {
+        socket.emit('error', { message: 'Rescue ID required to track driver' });
+        return;
+      }
+
+      const { RescueRequest } = await import('../models/index.js');
+      const rescue = await RescueRequest.findById(rescueId);
+
+      if (!rescue) {
+        socket.emit('error', { message: 'Rescue not found' });
+        return;
+      }
+
+      // Verify user is the rider of this rescue and driver matches
+      if (rescue.riderId.toString() !== riderId) {
+        socket.emit('error', { message: 'Not authorized to track this rescue' });
+        return;
+      }
+
+      if (!rescue.driverId || rescue.driverId.toString() !== driverId) {
+        socket.emit('error', { message: 'Driver not assigned to this rescue' });
+        return;
+      }
+
+      // Only allow tracking for active rescues
+      const activeStatuses = ['accepted', 'driver_enroute', 'driver_arrived', 'in_progress'];
+      if (!activeStatuses.includes(rescue.status)) {
+        socket.emit('error', { message: 'Rescue is not in a trackable state' });
+        return;
+      }
 
       const room = `driver:${driverId}:tracking`;
       socket.join(room);
@@ -102,11 +132,9 @@ export const registerLocationHandlers = (io, socket) => {
       }
 
       // Send journey data if available
-      if (rescueId) {
-        const journeyData = await locationService.trackRescueJourney(rescueId, driverId);
-        if (journeyData) {
-          socket.emit('journey:data', journeyData);
-        }
+      const journeyData = await locationService.trackRescueJourney(rescueId, driverId);
+      if (journeyData) {
+        socket.emit('journey:data', journeyData);
       }
 
       logger.debug('Rider subscribed to driver tracking', {
