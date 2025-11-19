@@ -32,13 +32,31 @@ const config = {
     db: parseInt(process.env.REDIS_DB, 10) || 0,
   },
   jwt: {
-    secret: process.env.JWT_SECRET || 'your-super-secret-jwt-key',
-    refreshSecret: process.env.JWT_REFRESH_SECRET || 'your-super-secret-refresh-key',
+    secret: (() => {
+      if (!process.env.JWT_SECRET && process.env.NODE_ENV === 'production') {
+        throw new Error('JWT_SECRET must be set in production');
+      }
+      return process.env.JWT_SECRET || 'dev-only-jwt-secret-change-in-prod';
+    })(),
+    refreshSecret: (() => {
+      if (!process.env.JWT_REFRESH_SECRET && process.env.NODE_ENV === 'production') {
+        throw new Error('JWT_REFRESH_SECRET must be set in production');
+      }
+      return process.env.JWT_REFRESH_SECRET || 'dev-only-refresh-secret-change-in-prod';
+    })(),
     expiresIn: process.env.JWT_EXPIRES_IN || '24h',
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
   },
   encryption: {
-    key: process.env.ENCRYPTION_KEY || 'your-32-character-encryption-key',
+    key: (() => {
+      if (!process.env.ENCRYPTION_KEY && process.env.NODE_ENV === 'production') {
+        throw new Error('ENCRYPTION_KEY must be set in production');
+      }
+      if (process.env.ENCRYPTION_KEY && process.env.ENCRYPTION_KEY.length !== 32) {
+        throw new Error('ENCRYPTION_KEY must be exactly 32 characters');
+      }
+      return process.env.ENCRYPTION_KEY || 'dev-only-32-char-encryption!!';
+    })(),
   },
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID,
