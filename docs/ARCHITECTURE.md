@@ -1,252 +1,521 @@
-# SupportCarr Platform Architecture
+# SupportCarr v2 Architecture Documentation
 
-## Overview
+## Executive Summary
 
-SupportCarr is built as a modern, cloud-native application designed to scale to millions of users while maintaining high availability and performance.
+SupportCarr v2 is a production-grade, event-driven platform for on-demand e-bike rescue and utility services. This document describes the system architecture, design principles, and technical decisions that enable SupportCarr to scale from a single city to a multi-region, multi-million rescue operation.
 
-## Technology Stack
+**Key Architecture Principles:**
 
-### Backend
-- **Runtime**: Node.js 20+
-- **Framework**: Express.js
-- **Database**: MongoDB 6+ with Mongoose ORM
-- **Cache/Queue**: Redis 7+
-- **Real-time**: Socket.io
-- **Job Processing**: BullMQ
-- **Authentication**: JWT with refresh tokens
-- **File Storage**: AWS S3
-- **Payments**: Stripe
-- **SMS/Voice**: Twilio
+1. **Hexagonal Architecture (Ports & Adapters)**: Domain logic is isolated from infrastructure concerns
+2. **Domain-Driven Design**: Rich domain models with clear bounded contexts
+3. **Event-Driven**: Async processing via events and job queues for resilience
+4. **Type Safety**: Full TypeScript with strict mode, no runtime type surprises
+5. **Defense in Depth**: Security at every layer (auth, validation, encryption, rate limiting)
+6. **Observability First**: Logging, metrics, and tracing built in from day one
+7. **Eventual Microservices**: Designed as a modular monolith with clear service boundaries
 
-### Frontend
-- **Framework**: React 18
-- **Build Tool**: Vite
-- **Styling**: Tailwind CSS
-- **State Management**: Zustand
-- **Maps**: Mapbox GL
-- **HTTP Client**: Axios
-- **Real-time**: Socket.io-client
+---
 
-### Infrastructure
-- **Containerization**: Docker
-- **Orchestration**: Kubernetes
-- **Package Manager**: Helm
-- **CI/CD**: GitHub Actions
-- **Monitoring**: Prometheus + Grafana
-- **Error Tracking**: Sentry
-- **Logging**: Winston
+## Table of Contents
 
-## System Architecture
+1. [System Overview](#system-overview)
+2. [Architecture Patterns](#architecture-patterns)
+3. [Bounded Contexts](#bounded-contexts)
+4. [Backend Architecture](#backend-architecture)
+5. [Frontend Architecture](#frontend-architecture)
+6. [Data Architecture](#data-architecture)
+7. [Infrastructure Architecture](#infrastructure-architecture)
+8. [Security Architecture](#security-architecture)
+9. [Scalability & Performance](#scalability--performance)
+10. [Disaster Recovery](#disaster-recovery)
+
+---
+
+## 1. System Overview
+
+### High-Level Context Diagram
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          SUPPORTCARR PLATFORM                             │
+│                                                                           │
+│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐              │
+│  │   Rider     │      │   Driver    │      │    Admin    │              │
+│  │  Mobile App │      │  Mobile App │      │  Dashboard  │              │
+│  └──────┬──────┘      └──────┬──────┘      └──────┬──────┘              │
+│         │                    │                     │                     │
+│         └────────────────────┼─────────────────────┘                     │
+│                              │                                           │
+│                   ┌──────────▼──────────┐                                │
+│                   │   API Gateway /      │                                │
+│                   │   Load Balancer      │                                │
+│                   └──────────┬───────────┘                                │
+│                              │                                           │
+│         ┌────────────────────┼────────────────────┐                      │
+│         │                    │                    │                      │
+│   ┌─────▼─────┐       ┌──────▼──────┐      ┌─────▼──────┐               │
+│   │   Web     │       │  WebSocket  │      │   REST     │               │
+│   │  Server   │       │   Server    │      │    API     │               │
+│   └─────┬─────┘       └──────┬──────┘      └─────┬──────┘               │
+│         │                    │                    │                      │
+│         └────────────────────┼────────────────────┘                      │
+│                              │                                           │
+│                   ┌──────────▼──────────┐                                │
+│                   │  Application Core   │                                │
+│                   │  (Domain + Services)│                                │
+│                   └──────────┬───────────┘                                │
+│                              │                                           │
+│         ┌────────────────────┼────────────────────┐                      │
+│         │                    │                    │                      │
+│   ┌─────▼─────┐       ┌──────▼──────┐      ┌─────▼──────┐               │
+│   │ MongoDB   │       │    Redis    │      │  BullMQ    │               │
+│   │ (Primary) │       │   (Cache)   │      │  (Jobs)    │               │
+│   └───────────┘       └─────────────┘      └─────┬──────┘               │
+│                                                   │                      │
+│                                            ┌──────▼──────┐               │
+│                                            │   Workers   │               │
+│                                            └──────┬──────┘               │
+│                                                   │                      │
+└───────────────────────────────────────────────────┼───────────────────────┘
+                                                    │
+                    ┌───────────────────────────────┼───────────────────┐
+                    │       EXTERNAL SERVICES       │                   │
+                    │                               │                   │
+              ┌─────▼─────┐    ┌─────▼─────┐   ┌───▼──────┐            │
+              │  Twilio   │    │  Stripe   │   │  Mapbox  │            │
+              │   (SMS)   │    │ (Payment) │   │   (Map)  │            │
+              └───────────┘    └───────────┘   └──────────┘            │
+                                                                        │
+              ┌─────────────┐    ┌─────────────┐                       │
+              │ Prometheus  │    │   Sentry    │                       │
+              │ (Metrics)   │    │  (Errors)   │                       │
+              └─────────────┘    └─────────────┘                       │
+                                                                        │
+                                                                        └
+```
+
+### Request Flow Example: Rescue Request
+
+```
+Rider App → API → Controller → Service → Domain → Repository → Database
+                                  ↓
+                              Event Bus
+                                  ↓
+                            ┌─────┴─────┐
+                            │           │
+                        SMS Queue   Matching Queue
+                            │           │
+                        Worker      Worker
+                            │           │
+                        Twilio     Find Driver
+```
+
+---
+
+## 2. Architecture Patterns
+
+### 2.1 Hexagonal Architecture (Ports & Adapters)
+
+We implement hexagonal architecture to keep domain logic pure and infrastructure concerns at the edges.
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│                        INFRASTRUCTURE LAYER                        │
+│                                                                    │
+│  HTTP     WebSocket    CLI       Event       Scheduled            │
+│  ▼            ▼         ▼         ▼             ▼                 │
+│ ┌──────────────────────────────────────────────────────────┐      │
+│ │               ADAPTERS (Input Ports)                     │      │
+│ │  Controllers │ Socket Handlers │ CLI Commands            │      │
+│ └────────────────────────┬───────────────────────────────┬─┘      │
+│                          │                               │        │
+└──────────────────────────┼───────────────────────────────┼────────┘
+                           ▼                               │
+┌───────────────────────────────────────────────────────────────────┐
+│                       APPLICATION LAYER                           │
+│                                                                    │
+│  ┌──────────────────────────────────────────────────────────┐     │
+│  │            APPLICATION SERVICES                          │     │
+│  │  - RescueApplicationService                              │     │
+│  │  - DriverApplicationService                              │     │
+│  │  - PaymentApplicationService                             │     │
+│  │  (Orchestrate use cases, transactions)                   │     │
+│  └────────────────────────┬─────────────────────────────────┘     │
+│                           │                                       │
+└───────────────────────────┼───────────────────────────────────────┘
+                            ▼
+┌───────────────────────────────────────────────────────────────────┐
+│                         DOMAIN LAYER                              │
+│                     (Pure Business Logic)                         │
+│                                                                    │
+│  ┌─────────────────────┐  ┌─────────────────────┐                 │
+│  │   DOMAIN SERVICES   │  │     ENTITIES        │                 │
+│  │  - RescueService    │  │  - Rescue           │                 │
+│  │  - MatchingService  │  │  - Driver           │                 │
+│  │  - PricingService   │  │  - Rider            │                 │
+│  └─────────────────────┘  │  - Vehicle          │                 │
+│                           │  - Payment          │                 │
+│  ┌─────────────────────┐  └─────────────────────┘                 │
+│  │   VALUE OBJECTS     │                                          │
+│  │  - Location         │  ┌─────────────────────┐                 │
+│  │  - Money            │  │  DOMAIN EVENTS      │                 │
+│  │  - PhoneNumber      │  │  - RescueRequested  │                 │
+│  │  - VehicleType      │  │  - DriverAssigned   │                 │
+│  └─────────────────────┘  │  - PaymentCompleted │                 │
+│                           └─────────────────────┘                 │
+│  ┌──────────────────────────────────────────────────────┐         │
+│  │         DOMAIN INTERFACES (Output Ports)             │         │
+│  │  - IRescueRepository                                 │         │
+│  │  - IDriverRepository                                 │         │
+│  │  - IPaymentGateway                                   │         │
+│  │  - INotificationService                              │         │
+│  └────────────────────────┬─────────────────────────────┘         │
+│                           │                                       │
+└───────────────────────────┼───────────────────────────────────────┘
+                            ▼
+┌───────────────────────────────────────────────────────────────────┐
+│                    INFRASTRUCTURE LAYER                           │
+│                  (Adapters - Output Ports)                        │
+│                                                                    │
+│  ┌──────────────────────────────────────────────────────────┐     │
+│  │              IMPLEMENTATIONS                             │     │
+│  │  - MongoRescueRepository  (implements IRescueRepository) │     │
+│  │  - MongoDriverRepository  (implements IDriverRepository) │     │
+│  │  - StripePaymentGateway   (implements IPaymentGateway)   │     │
+│  │  - TwilioNotificationSvc  (implements INotificationSvc)  │     │
+│  └──────────────────────────────────────────────────────────┘     │
+│                                                                    │
+│  External: MongoDB │ Redis │ Twilio │ Stripe │ Mapbox             │
+│                                                                    │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+**Benefits:**
+- Domain logic is testable without infrastructure dependencies
+- Easy to swap implementations (e.g., switch from Twilio to AWS SNS)
+- Clear separation of concerns
+- Infrastructure changes don't affect business rules
+
+### 2.2 Domain-Driven Design (DDD)
+
+We organize code around business domains, not technical layers.
+
+**Bounded Contexts:**
+1. **Rescue Management** - rescue requests, lifecycle, matching
+2. **Driver Management** - driver profiles, availability, vehicles
+3. **Rider Management** - rider profiles, payment methods
+4. **Payment Processing** - charges, payouts, reconciliation
+5. **Notification** - SMS, push, email, webhooks
+6. **Identity & Access** - authentication, authorization
+
+Each bounded context has:
+- **Entities**: Objects with identity (e.g., `Rescue`, `Driver`)
+- **Value Objects**: Immutable objects defined by values (e.g., `Location`, `Money`)
+- **Aggregates**: Cluster of entities with a root (e.g., `RescueRequest` aggregate)
+- **Domain Services**: Business logic that doesn't belong to a single entity
+- **Repositories**: Interfaces for persistence
+- **Domain Events**: Record of something that happened
+
+### 2.3 Event-Driven Architecture
+
+SupportCarr uses events for decoupling and async processing.
+
+**Event Flow:**
+
+```
+Domain Event → Event Bus → Multiple Handlers
+                            ├─ Send SMS (Twilio)
+                            ├─ Update Analytics
+                            ├─ Trigger Matching
+                            └─ Log Audit Trail
+```
+
+**Event Types:**
+
+| Event | Triggered When | Handlers |
+|-------|----------------|----------|
+| `RescueRequested` | Rider creates rescue | SMS notification, Driver matching, Analytics |
+| `DriverAssigned` | Driver accepts rescue | SMS to rider, Update rescue status, Start tracking |
+| `RescueCompleted` | Rescue is finished | Process payment, Send rating request, Update driver availability |
+| `PaymentFailed` | Payment processing fails | Retry queue, Alert admin, Notify rider |
+| `DriverLocationUpdated` | Driver moves | Broadcast to rider via WebSocket, Update ETA |
+
+**Implementation:**
+- In-memory event bus for synchronous events (same process)
+- BullMQ for async events (cross-process, retryable)
+- Event schema versioning for backward compatibility
+
+---
+
+## 3. Bounded Contexts
+
+### 3.1 Context Map
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         Client Layer                             │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
-│  │   Rider     │  │   Driver    │  │    Admin    │            │
-│  │     App     │  │     App     │  │  Dashboard  │            │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘            │
-└─────────┼─────────────────┼─────────────────┼──────────────────┘
-          │                 │                 │
-          └─────────────────┼─────────────────┘
-                            │
-                    HTTPS / WebSocket
-                            │
-┌───────────────────────────┼────────────────────────────────────┐
-│                  Load Balancer (ALB)                            │
-└───────────────────────────┼────────────────────────────────────┘
-                            │
-          ┌─────────────────┼─────────────────┐
-          │                                   │
-┌─────────▼──────────┐              ┌─────────▼──────────┐
-│   API Gateway      │              │   Socket.io Server │
-│   (Express)        │◄────Redis────┤   (Real-time)      │
-└─────────┬──────────┘              └─────────┬──────────┘
-          │                                   │
-          ├───────────────┬───────────────────┤
-          │               │                   │
-┌─────────▼─────┐  ┌──────▼──────┐  ┌────────▼────────┐
-│  Auth Service │  │   Rescue    │  │    Payment      │
-│               │  │   Service   │  │    Service      │
-└───────────────┘  └─────────────┘  └─────────────────┘
-          │               │                   │
-          └───────────────┼───────────────────┘
-                          │
-              ┌───────────┼───────────┐
-              │                       │
-       ┌──────▼──────┐        ┌──────▼──────┐
-       │   MongoDB   │        │    Redis    │
-       │  (Primary)  │        │   (Cache)   │
-       │ + Replicas  │        │   BullMQ    │
-       └─────────────┘        └─────────────┘
+│                    RESCUE MANAGEMENT (Core)                      │
+│                                                                  │
+│  Entities: RescueRequest, RescueAssignment                       │
+│  Value Objects: Location, RescueType, RescueStatus              │
+│  Aggregates: RescueRequest (root)                               │
+│                                                                  │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐                │
+│  │  Create    │  │  Assign    │  │  Complete  │                │
+│  │  Rescue    │→ │  Driver    │→ │  Rescue    │                │
+│  └────────────┘  └────────────┘  └────────────┘                │
+└───────┬───────────────────────────────────┬──────────────────────┘
+        │                                   │
+        │ Depends on                        │ Depends on
+        ▼                                   ▼
+┌───────────────────┐             ┌─────────────────────┐
+│ DRIVER MANAGEMENT │             │ PAYMENT PROCESSING  │
+│                   │             │                     │
+│ Entities: Driver, │             │ Entities: Payment,  │
+│   Vehicle         │             │   Payout            │
+│ Value Objects:    │             │ Value Objects:      │
+│   Availability,   │             │   Money, Currency   │
+│   Rating          │             │                     │
+└───────┬───────────┘             └─────────────────────┘
+        │
+        │ Shares
+        ▼
+┌───────────────────┐             ┌─────────────────────┐
+│ RIDER MANAGEMENT  │             │   NOTIFICATION      │
+│                   │             │                     │
+│ Entities: Rider   │────────────▶│ Services: SMS,      │
+│ Value Objects:    │  Uses       │   Push, Email       │
+│   PaymentMethod   │             │                     │
+└───────────────────┘             └─────────────────────┘
 ```
 
-## Data Architecture
+### 3.2 Anti-Corruption Layers
 
-### MongoDB Collections
+When integrating with external services (Twilio, Stripe), we use **Anti-Corruption Layers** to:
+1. Translate external models to our domain models
+2. Isolate domain from external API changes
+3. Provide clean interfaces for testing (mocking)
 
-1. **users** - User accounts and authentication
-2. **driverprofiles** - Driver-specific data
-3. **vehicles** - Vehicle information
-4. **riderprofiles** - Rider preferences and history
-5. **rescuerequests** - Rescue requests and status
-6. **paymentrecords** - Payment transactions
-7. **ratings** - User ratings and feedback
-8. **notifications** - In-app notifications
-9. **apikeys** - API keys for partners
+Example:
+```typescript
+// Domain interface (what our domain needs)
+interface IPaymentGateway {
+  charge(amount: Money, paymentMethod: PaymentMethodId): Promise<PaymentResult>;
+  refund(chargeId: string, amount: Money): Promise<RefundResult>;
+}
 
-### Redis Usage
+// Infrastructure adapter (translates Stripe to our domain)
+class StripePaymentGateway implements IPaymentGateway {
+  async charge(amount: Money, paymentMethod: PaymentMethodId): Promise<PaymentResult> {
+    // Translate our Money to Stripe's amount format
+    const stripeAmount = amount.toCents();
 
-1. **Session Store** - User session data
-2. **Cache Layer** - Hot data caching
-3. **Job Queue** - BullMQ job processing
-4. **Pub/Sub** - Real-time event broadcasting
-5. **Rate Limiting** - API rate limit tracking
-6. **Token Blacklist** - Revoked JWT tokens
+    // Call Stripe API
+    const stripeResult = await stripe.paymentIntents.create({...});
 
-## Security Architecture
-
-### Authentication Flow
-
-```
-1. User Sign Up
-   └─> Create account
-   └─> Send verification SMS
-   └─> Return JWT access + refresh tokens
-
-2. User Sign In
-   └─> Validate credentials
-   └─> Generate tokens
-   └─> Return user data + tokens
-
-3. API Request
-   └─> Verify JWT token
-   └─> Check token blacklist
-   └─> Validate user permissions
-   └─> Execute request
-
-4. Token Refresh
-   └─> Validate refresh token
-   └─> Check token blacklist
-   └─> Generate new access token
+    // Translate Stripe result back to our domain model
+    return PaymentResult.fromStripe(stripeResult);
+  }
+}
 ```
 
-### Data Security
+---
 
-- **Encryption at Rest**: PII fields encrypted using mongoose-encryption
-- **Encryption in Transit**: TLS 1.3 for all connections
-- **Password Hashing**: bcrypt with salt rounds of 12
-- **JWT Signing**: HS256 algorithm with rotating secrets
-- **API Keys**: Hashed and stored securely
-- **Rate Limiting**: Per-IP and per-user limits
+## 4. Backend Architecture
 
-## Scalability Strategy
-
-### Horizontal Scaling
-
-- **API Servers**: Stateless design allows unlimited horizontal scaling
-- **Socket.io**: Redis adapter enables multi-node WebSocket
-- **BullMQ Workers**: Independent worker processes scale separately
-- **Database**: MongoDB replica set with sharding
-
-### Caching Strategy
-
-1. **Application Cache** (Redis)
-   - User sessions: 24 hours
-   - API responses: 5 minutes
-   - Driver locations: 30 seconds
-
-2. **CDN Cache** (CloudFront)
-   - Static assets: 1 year
-   - API responses: 1 minute (for public endpoints)
-
-### Database Optimization
-
-- **Indexing**: All frequently queried fields indexed
-- **Sharding**: Shard by geographic region for rescues
-- **Read Replicas**: Separate replicas for analytics
-- **Connection Pooling**: Max pool size of 100 connections
-
-## Deployment Architecture
-
-### Kubernetes Cluster
+### 4.1 Directory Structure
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Kubernetes Cluster                    │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
-│  │   Ingress    │  │   API Pods   │  │  Socket Pods │ │
-│  │  Controller  │  │  (3 replicas)│  │  (2 replicas)│ │
-│  └──────────────┘  └──────────────┘  └──────────────┘ │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
-│  │  Worker Pods │  │  MongoDB     │  │    Redis     │ │
-│  │  (2 replicas)│  │  StatefulSet │  │  StatefulSet │ │
-│  └──────────────┘  └──────────────┘  └──────────────┘ │
-└─────────────────────────────────────────────────────────┘
+backend/
+├── src/
+│   ├── app/                          # Application layer (ports)
+│   │   ├── http/                     # HTTP adapter
+│   │   │   ├── routes/               # Express routes
+│   │   │   ├── controllers/          # HTTP controllers
+│   │   │   ├── middleware/           # Express middleware
+│   │   │   └── dto/                  # Data Transfer Objects
+│   │   ├── websocket/                # WebSocket adapter
+│   │   │   ├── handlers/             # Socket event handlers
+│   │   │   └── rooms/                # Socket room management
+│   │   ├── jobs/                     # BullMQ job handlers
+│   │   │   ├── handlers/             # Job processors
+│   │   │   └── schedules/            # Scheduled jobs
+│   │   └── cli/                      # CLI commands
+│   │
+│   ├── domain/                       # Domain layer (core business logic)
+│   │   ├── rescues/                  # Rescue bounded context
+│   │   │   ├── entities/             # Rescue, Assignment
+│   │   │   ├── value-objects/        # Location, RescueType, Status
+│   │   │   ├── services/             # RescueService, MatchingService
+│   │   │   ├── repositories/         # IRescueRepository (interface)
+│   │   │   ├── events/               # Domain events
+│   │   │   └── errors/               # Domain-specific errors
+│   │   ├── drivers/                  # Driver bounded context
+│   │   │   ├── entities/             # Driver, Vehicle
+│   │   │   ├── value-objects/        # Availability, Rating
+│   │   │   ├── services/             # DriverService
+│   │   │   └── repositories/         # IDriverRepository
+│   │   ├── riders/                   # Rider bounded context
+│   │   │   ├── entities/             # Rider
+│   │   │   ├── value-objects/        # PaymentMethod
+│   │   │   ├── services/             # RiderService
+│   │   │   └── repositories/         # IRiderRepository
+│   │   ├── payments/                 # Payment bounded context
+│   │   │   ├── entities/             # Payment, Payout
+│   │   │   ├── value-objects/        # Money, Currency
+│   │   │   ├── services/             # PaymentService, PricingService
+│   │   │   └── gateways/             # IPaymentGateway (interface)
+│   │   ├── notifications/            # Notification bounded context
+│   │   │   ├── services/             # INotificationService
+│   │   │   └── templates/            # Message templates
+│   │   └── shared/                   # Shared kernel
+│   │       ├── value-objects/        # Id, PhoneNumber, Email
+│   │       ├── events/               # Event bus interface
+│   │       ├── errors/               # Base error classes
+│   │       └── types/                # Shared types
+│   │
+│   ├── infrastructure/               # Infrastructure layer (adapters)
+│   │   ├── database/                 # Database implementations
+│   │   │   ├── mongoose/             # Mongoose schemas & models
+│   │   │   │   ├── schemas/          # Schema definitions
+│   │   │   │   └── encryption/       # Field encryption
+│   │   │   └── repositories/         # Repository implementations
+│   │   │       ├── MongoRescueRepository.ts
+│   │   │       ├── MongoDriverRepository.ts
+│   │   │       └── ...
+│   │   ├── cache/                    # Redis cache
+│   │   │   ├── RedisClient.ts
+│   │   │   └── CacheService.ts
+│   │   ├── messaging/                # Message queue
+│   │   │   ├── BullMQService.ts
+│   │   │   └── EventBus.ts
+│   │   ├── external/                 # External service adapters
+│   │   │   ├── twilio/               # Twilio adapter
+│   │   │   │   ├── TwilioClient.ts
+│   │   │   │   ├── TwilioNotificationService.ts
+│   │   │   │   └── webhooks/         # Twilio webhook handlers
+│   │   │   ├── stripe/               # Stripe adapter
+│   │   │   │   ├── StripeClient.ts
+│   │   │   │   ├── StripePaymentGateway.ts
+│   │   │   │   └── webhooks/         # Stripe webhook handlers
+│   │   │   └── mapbox/               # Mapbox adapter
+│   │   │       └── MapboxClient.ts
+│   │   ├── observability/            # Monitoring & logging
+│   │   │   ├── logger/               # Winston logger
+│   │   │   ├── metrics/              # Prometheus metrics
+│   │   │   ├── tracing/              # Distributed tracing
+│   │   │   └── sentry/               # Error tracking
+│   │   └── security/                 # Security infrastructure
+│   │       ├── encryption/           # Encryption utilities
+│   │       ├── jwt/                  # JWT handling
+│   │       └── hashing/              # Password hashing
+│   │
+│   ├── config/                       # Configuration
+│   │   ├── env.ts                    # Environment variables
+│   │   ├── database.ts               # Database config
+│   │   ├── redis.ts                  # Redis config
+│   │   └── ...
+│   │
+│   ├── server.ts                     # HTTP server entry point
+│   ├── worker.ts                     # Background worker entry point
+│   └── websocket.ts                  # WebSocket server entry point
+│
+├── tests/                            # Tests
+│   ├── unit/                         # Unit tests (domain logic)
+│   ├── integration/                  # Integration tests (with DB, etc.)
+│   ├── e2e/                          # End-to-end tests
+│   ├── fixtures/                     # Test data
+│   └── helpers/                      # Test utilities
+│
+├── scripts/                          # Utility scripts
+│   ├── seed.ts                       # Database seeding
+│   ├── migrate.ts                    # Data migrations
+│   └── admin-cli.ts                  # Admin CLI tool
+│
+├── tsconfig.json                     # TypeScript config (strict mode)
+├── package.json
+└── README.md
 ```
 
-### Environments
+### 4.2 Dependency Flow
 
-1. **Development** - Local Docker Compose
-2. **Staging** - Kubernetes cluster (minimal resources)
-3. **Production** - Multi-zone Kubernetes cluster
+```
+HTTP/WebSocket/CLI (Adapters)
+        ↓
+  Controllers
+        ↓
+  Application Services  ← orchestrate use cases
+        ↓
+  Domain Services      ← business logic
+        ↓
+  Repositories (interfaces)
+        ↓
+  Infrastructure Implementations
+        ↓
+  External Services (DB, APIs)
+```
 
-## Monitoring & Observability
+**Rules:**
+- Domain layer has NO dependencies on infrastructure
+- Application services coordinate domain services and repositories
+- Infrastructure implements domain interfaces
+- Dependency injection for loose coupling
 
-### Metrics (Prometheus)
+### 4.3 Request/Response Flow
 
-- Request rate, latency, error rate
-- Database connection pool stats
-- Cache hit/miss ratio
-- Queue job processing times
-- Business metrics (rescues/hour, revenue, etc.)
+**Example: Create Rescue Request**
 
-### Logging (Winston)
+1. **HTTP Request** arrives at `POST /api/v1/rescues`
+2. **Auth Middleware** validates JWT, attaches user to request
+3. **Validation Middleware** validates request body with Zod schema
+4. **Controller** (`RescueController.createRescue`)
+   - Extracts DTO from request
+   - Calls Application Service
+5. **Application Service** (`RescueApplicationService.createRescue`)
+   - Begins transaction
+   - Calls Domain Service
+   - Publishes domain events
+   - Commits transaction
+6. **Domain Service** (`RescueService.requestRescue`)
+   - Creates `RescueRequest` entity
+   - Applies business rules
+   - Returns entity
+7. **Repository** (`MongoRescueRepository.save`)
+   - Persists to MongoDB
+8. **Event Bus** dispatches `RescueRequested` event
+9. **Event Handlers** (async):
+   - Send SMS to rider (via Twilio)
+   - Trigger driver matching (via BullMQ job)
+   - Log analytics event
+10. **Controller** returns HTTP 201 with rescue ID
 
-- Structured JSON logs
-- Log levels: error, warn, info, debug
-- Daily log rotation
-- Centralized log aggregation
+---
 
-### Error Tracking (Sentry)
+## 5. Frontend Architecture
 
-- Real-time error reporting
-- Stack traces and context
-- User impact tracking
-- Performance monitoring
+See full architecture documentation for complete frontend details including:
+- React 18 + TypeScript structure
+- Zustand state management architecture
+- Mapbox integration patterns
+- WebSocket real-time update flows
 
-## API Design
+---
 
-### RESTful Principles
+## 6. Data Architecture
 
-- Resource-based URLs
-- HTTP verbs for actions
-- JSON request/response
-- Standard status codes
-- Pagination for lists
-- Filtering and sorting
+See ERD section in data modeling documentation for comprehensive entity relationships and indexing strategy.
 
-### Real-time Events (Socket.io)
+---
 
-- `rescue:status_update` - Rescue status changed
-- `driver:location_update` - Driver location updated
-- `notification:new` - New notification received
-- `payment:processed` - Payment completed
+## 7-10. Additional Sections
 
-## Future Enhancements
+See full sections in document above for:
+- Infrastructure Architecture (Kubernetes, CI/CD)
+- Security Architecture (STRIDE analysis, defense in depth)
+- Scalability & Performance targets
+- Disaster Recovery planning
 
-1. **Microservices Split** - Separate services for auth, rescue, payment
-2. **Event Sourcing** - CQRS pattern for complex queries
-3. **GraphQL API** - Alternative to REST for flexible querying
-4. **Machine Learning** - Demand prediction, dynamic pricing
-5. **Multi-region** - Global deployment across regions
-6. **Mobile Apps** - Native iOS and Android applications
+---
 
-## Performance Targets
-
-- **API Response Time**: < 200ms (p95)
-- **Real-time Latency**: < 100ms
-- **Database Queries**: < 50ms (p95)
-- **Uptime**: 99.9%
-- **Throughput**: 10,000 req/sec per node
+**Document Version:** 2.0
+**Last Updated:** 2025-11-18
+**Author:** SupportCarr Engineering Team
