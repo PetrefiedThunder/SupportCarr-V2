@@ -312,50 +312,79 @@ export const resolvers = {
         throw new ForbiddenError('Only drivers can accept rescues');
       }
 
-      const rescue = await RescueRequest.findById(rescueId);
+      // Use atomic findOneAndUpdate to prevent race condition where multiple drivers
+      // try to accept the same rescue simultaneously
+      const rescue = await RescueRequest.findOneAndUpdate(
+        {
+          _id: rescueId,
+          status: 'pending', // Only update if still pending
+        },
+        {
+          $set: {
+            driverId: user.userId,
+            status: 'accepted',
+            acceptedAt: new Date(),
+          },
+          $push: {
+            timeline: {
+              status: 'accepted',
+              timestamp: new Date(),
+              message: 'Driver accepted the rescue request',
+            },
+          },
+        },
+        {
+          new: true, // Return updated document
+          runValidators: true,
+        }
+      );
+
       if (!rescue) {
-        throw new UserInputError('Rescue not found');
+        throw new UserInputError('Rescue not found or no longer available');
       }
 
-      if (rescue.status !== 'pending') {
-        throw new UserInputError('Rescue is no longer available');
-      }
-
-      rescue.driverId = user.userId;
-      rescue.status = 'accepted';
-      rescue.timeline.push({
-        status: 'accepted',
-        timestamp: new Date(),
-        message: 'Driver accepted the rescue request',
-      });
-
-      await rescue.save();
       return rescue;
     },
 
     updateRescueStatus: async (_, { rescueId, status }, { user }) => {
       if (!user) throw new AuthenticationError('Not authenticated');
 
-      const rescue = await RescueRequest.findById(rescueId);
-      if (!rescue) {
-        throw new UserInputError('Rescue not found');
-      }
-
-      if (user.role === 'driver' && rescue.driverId.toString() !== user.userId) {
+      // Build query with authorization check
+      const query = { _id: rescueId };
+      if (user.role === 'driver') {
+        query.driverId = user.userId;
+      } else if (user.role !== 'admin') {
         throw new ForbiddenError('Not authorized');
       }
 
-      rescue.status = status;
-      rescue.timeline.push({
-        status,
-        timestamp: new Date(),
-      });
+      // Use atomic update to prevent race conditions
+      const updateFields = {
+        $set: { status },
+        $push: {
+          timeline: {
+            status,
+            timestamp: new Date(),
+          },
+        },
+      };
 
       if (status === 'completed') {
-        rescue.completedAt = new Date();
+        updateFields.$set.completedAt = new Date();
       }
 
-      await rescue.save();
+      const rescue = await RescueRequest.findOneAndUpdate(
+        query,
+        updateFields,
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+
+      if (!rescue) {
+        throw new UserInputError('Rescue not found or not authorized');
+      }
+
       return rescue;
     },
 
@@ -381,11 +410,25 @@ export const resolvers = {
         throw new ForbiddenError('Only drivers can toggle online status');
       }
 
+      // Use atomic update to toggle without race condition
       const driver = await DriverProfile.findOne({ userId: user.userId });
-      driver.isOnline = !driver.isOnline;
-      await driver.save();
+      if (!driver) {
+        throw new UserInputError('Driver profile not found');
+      }
 
-      return driver;
+      const updated = await DriverProfile.findOneAndUpdate(
+        { userId: user.userId },
+        [
+          {
+            $set: {
+              isOnline: { $not: '$isOnline' },
+            },
+          },
+        ],
+        { new: true }
+      );
+
+      return updated;
     },
 
     // Notification mutations
