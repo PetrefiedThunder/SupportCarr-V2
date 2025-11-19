@@ -12,3 +12,6 @@ export * from './layout';
 
 // Provider Components
 export * from './providers';
+
+// Map Components
+export * from './map';
