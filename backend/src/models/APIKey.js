@@ -10,19 +10,16 @@ const apiKeySchema = new Schema(
       required: true,
       trim: true,
     },
-    key: {
-      type: String,
-      required: true,
-      unique: true,
-      index: true,
-    },
     keyPrefix: {
       type: String,
       required: true,
+      index: true,
     },
     hashedKey: {
       type: String,
       required: true,
+      unique: true,
+      index: true,
       select: false,
     },
     userId: {
@@ -92,7 +89,8 @@ const apiKeySchema = new Schema(
 );
 
 // Indexes
-apiKeySchema.index({ key: 1 });
+apiKeySchema.index({ hashedKey: 1 });
+apiKeySchema.index({ keyPrefix: 1 });
 apiKeySchema.index({ userId: 1, isActive: 1 });
 apiKeySchema.index({ expiresAt: 1 });
 
@@ -133,8 +131,9 @@ apiKeySchema.statics.generateKey = function () {
   return { key, prefix, hashedKey };
 };
 
-apiKeySchema.statics.findByKey = function (key) {
-  return this.findOne({ key, isActive: true }).select('+hashedKey');
+apiKeySchema.statics.findByKey = async function (key) {
+  const hashedKey = crypto.createHash('sha256').update(key).digest('hex');
+  return this.findOne({ hashedKey, isActive: true }).select('+hashedKey');
 };
 
 apiKeySchema.statics.verifyKey = function (key, providedKey) {

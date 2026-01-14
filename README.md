@@ -4,47 +4,41 @@
 
 ## 🎯 Overview
 
-SupportCarr is the "Uber for roadside rescue" - connecting stranded e-bike riders with nearby pickup truck drivers. It's also a "friend with a truck" platform for utility tasks like dump runs, Craigslist pickups, and hauling.
+SupportCarr is the "Uber for roadside rescue" - connecting stranded e-bike riders with nearby pickup truck drivers. It's also a "friend with a truck" platform for utility tasks like dump runs, Craigslist pickups, and hauling. The platform ships with a type-safe Node.js API, a Vite/React operations console, real-time dispatch over Socket.io, and a DevOps toolchain so you can run a production-like environment locally.
 
 ### Key Features
 
 - **On-Demand Rescue**: Request a pickup truck to rescue you and your e-bike
-- **Real-Time Tracking**: Live GPS tracking of driver location
-- **Smart Dispatch**: Automatic routing to nearest available driver
-- **Flexible Tasks**: Schedule utility jobs (dump runs, pickups, hauling)
+- **Real-Time Tracking**: Live GPS tracking of driver and rider locations through Socket.io rooms
+- **Smart Dispatch**: Automatic routing and surge controls encoded in `backend/src/services`
+- **Flexible Tasks**: Schedule utility jobs (dump runs, pickups, hauling) via feature flags
 - **Gig Economy**: Asset-light model using existing truck owners
-- **Secure Payments**: Stripe integration for seamless transactions
-- **SMS Notifications**: Twilio-powered updates and verification
-- **Admin Dashboard**: Complete operational oversight
+- **Secure Payments**: Stripe Connect-style payments with BullMQ payout workers
+- **SMS Notifications**: Twilio-powered updates and verification flows
+- **Admin Dashboard**: React-based operations console with analytics and driver controls
+- **GraphQL + REST**: Apollo Server runs alongside Express REST routes for richer queries
 
 ## 🏗️ Architecture
 
 ### Tech Stack
 
-**Backend:**
-- Node.js 20+ with Express
-- MongoDB with Mongoose
-- Redis for caching and job queues
-- BullMQ for background processing
-- Socket.io for real-time updates
-- JWT authentication
-- Twilio for SMS/voice
-- Stripe for payments
+**Backend (`backend/`):**
+- Node.js 20+, Express, and Apollo Server for the dual REST/GraphQL API
+- MongoDB via Mongoose models plus Redis/ioredis for caching and queues
+- BullMQ workers (`backend/src/workers`) for notifications, payments, and analytics pipelines
+- Socket.io for realtime rider/driver updates and location streaming
+- JWT authentication, request rate limiting, and field-level encryption for PII
+- Stripe, Twilio, AWS S3, email, and Mapbox integrations controlled through `.env`
 
-**Frontend:**
-- React 18 with Vite
-- Tailwind CSS
-- Zustand state management
-- Mapbox for maps
-- Axios for API calls
-- Socket.io-client for real-time
+**Frontend (`frontend/`):**
+- React 18 + Vite + Tailwind CSS UI kit
+- Zustand stores for app state, React Router for navigation, Mapbox GL for dispatch views
+- Axios + Socket.io-client for talking to the API in real time
 
-**DevOps:**
-- Docker & Docker Compose
-- Kubernetes with Helm
-- GitHub Actions CI/CD
-- Prometheus & Grafana monitoring
-- Sentry error tracking
+**DevOps (`helm/`, `k8s/`, `monitoring/`):**
+- Docker & Docker Compose for local orchestration
+- Helm charts and raw Kubernetes manifests for cluster deployments
+- GitHub Actions workflows, Prometheus/Grafana dashboards, and Sentry for telemetry
 
 ### System Architecture
 
@@ -73,14 +67,27 @@ SupportCarr is the "Uber for roadside rescue" - connecting stranded e-bike rider
     MongoDB                Redis
 ```
 
+## 🗂 Repository Structure
+
+```
+SupportCarr-V2/
+├── backend/            # Express/Apollo API, BullMQ workers, domain services
+├── frontend/           # React + Vite console used by riders, drivers, and admins
+├── docs/               # Architecture, API, deployment, runbook, and security guides
+├── monitoring/         # Prometheus rules, Grafana dashboards, alerting configs
+├── helm/ | k8s/        # Production deployment artefacts
+├── tests/              # Black-box API tests that hit the running backend
+└── docker-compose.yml  # Local orchestration for MongoDB, Redis, API, and web
+```
+
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 20+ / npm 10+
 - MongoDB 6+
 - Redis 7+
-- Docker & Docker Compose (optional)
+- Docker & Docker Compose (optional but recommended)
 
 ### Local Development
 
@@ -92,11 +99,11 @@ cd SupportCarr-V2
 
 2. **Install dependencies**
 ```bash
-# Backend
+# Backend API
 cd backend
 npm install
 
-# Frontend
+# Frontend console
 cd ../frontend
 npm install
 ```
@@ -106,64 +113,81 @@ npm install
 # Backend
 cd backend
 cp .env.example .env
-# Edit .env with your credentials
+# Ships with realistic mock keys so the API boots immediately.
+# Replace with real credentials before deploying to prod.
 
 # Frontend
 cd ../frontend
-cp .env.example .env
+cp .env.example .env.local
+# Update VITE_API_URL/VITE_WS_URL if the API uses a non-default host.
 ```
 
-4. **Start MongoDB and Redis**
+**Note**: The `.env.example` files include realistic-looking **mock API keys** that allow you to:
+- Start the application immediately without configuring external services
+- Run demos and development without exposing real credentials
+- Understand the required format for each service's credentials
+
+**For full functionality**, replace mock values with real credentials:
+- **Stripe**: Get test keys from https://dashboard.stripe.com/test/apikeys
+- **Twilio**: Get credentials from https://console.twilio.com/
+- **Mapbox**: Get access token from https://account.mapbox.com/
+- **AWS S3**: Create IAM user with S3 access
+- **Sentry**: Create project at https://sentry.io/
+- See [Environment Variables](#⚙️-environment-variables) for the exhaustive list
+
+4. **Start supporting services**
 ```bash
-# Using Docker
+# Using Docker (recommended)
 docker-compose up -d mongo redis
 
-# Or install locally
+# Or install natively
 # MongoDB: https://docs.mongodb.com/manual/installation/
 # Redis: https://redis.io/download
 ```
 
-5. **Run migrations and seed data**
+5. **Seed sample data**
 ```bash
 cd backend
 npm run db:seed
 ```
 
-6. **Start development servers**
+6. **Run the platform**
 ```bash
-# Terminal 1 - Backend
+# Terminal 1 - Backend REST/GraphQL API + Socket.io
 cd backend
 npm run dev
 
-# Terminal 2 - Frontend
-cd frontend
-npm run dev
-
-# Terminal 3 - Background workers
+# Terminal 2 - BullMQ workers
 cd backend
 npm run worker
+
+# Terminal 3 - Frontend console
+cd frontend
+npm run dev
 ```
 
 7. **Access the application**
 - Frontend: http://localhost:5173
-- Backend API: http://localhost:3000
-- API Docs: http://localhost:3000/api-docs
+- Backend API (REST): http://localhost:3000/api/v1
+- GraphQL endpoint: http://localhost:3000/graphql
+- Health & metrics: http://localhost:3000/health and http://localhost:3000/metrics
 
-### Docker Development
+### Docker-Compose All-In-One
+
+`docker-compose.yml` already wires MongoDB, Redis, the backend (with hot reload), and the frontend together.
 
 ```bash
-# Start all services
-docker-compose up
+# Boot everything
+docker-compose up --build
 
-# Run with hot reload
-docker-compose -f docker-compose.dev.yml up
-
-# View logs
+# Tail API logs
 docker-compose logs -f api
 
-# Stop all services
+# Tear everything down
 docker-compose down
 ```
+
+Hot reloading works because both the `backend/` and `frontend/` directories are bind-mounted into their respective containers.
 
 ## 📚 Documentation
 
@@ -173,6 +197,51 @@ docker-compose down
 - [Deployment Guide](./docs/DEPLOYMENT.md)
 - [Contributing Guide](./CONTRIBUTING.md)
 - [Operational Runbook](./docs/RUNBOOK.md)
+- [Monitoring configs](./monitoring) for Prometheus/Grafana wiring
+
+The docs folder contains the canonical source of truth for payload formats, SLAs, and operational runbooks referenced by the
+console and workers.
+
+## 🔧 Development Workflow
+
+### Backend scripts (`backend/package.json`)
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Starts the Express + Apollo API with Nodemon |
+| `npm run worker` | Boots BullMQ workers defined in `backend/src/workers` |
+| `npm run db:seed` | Seeds Mongo with deterministic demo data |
+| `npm test` / `npm run test:*` | Runs Jest suites (unit, integration, e2e, coverage) |
+| `npm run lint` / `npm run format` | Ensures code-style consistency |
+
+### Frontend scripts (`frontend/package.json`)
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Runs Vite dev server with hot module reload |
+| `npm run build` | Builds a production bundle |
+| `npm run preview` | Serves the production bundle locally |
+| `npm run lint` / `npm run format` | ESLint + Prettier across `src/` |
+
+### Tests directory (`tests/`)
+
+End-to-end suites under `tests/` assume the API is running at `http://localhost:3000`. Bring the stack up (Docker or manual) and
+then run `npm test` from the `backend/` folder to exercise authentication, rescues, payments, analytics, and worker jobs.
+
+## ⚙️ Environment Variables
+
+- `backend/.env.example` documents every integration key used by `backend/src/config/index.js` (Stripe, Twilio, AWS, Mapbox,
+  feature flags, etc.). Copy it to `.env` and tweak values for your environment.
+- `frontend/.env.example` lists the Vite variables (`VITE_API_URL`, `VITE_WS_URL`, `VITE_MAPBOX_TOKEN`) consumed by the React app.
+- The API exposes `/health` and `/ready` endpoints so Kubernetes and Docker can perform readiness/liveness checks using those
+  values.
+
+## 📡 Observability & Ops
+
+- `backend/src/services/metricsService.js` publishes Prometheus metrics at `/metrics` and instruments every request.
+- `monitoring/` ships alert rules and dashboards you can import into Grafana.
+- `helm/` and `k8s/` contain the manifests that wire probes, secrets, and config maps around the API, workers, and frontend.
+- `docs/RUNBOOK.md` outlines the on-call playbook for incidents, while `docs/DEPLOYMENT.md` covers CI/CD using GitHub Actions.
 
 ## 🔐 Security
 
@@ -206,11 +275,13 @@ npm run test:coverage
 
 ## 📊 Monitoring
 
-- **Application Metrics**: Prometheus + Grafana
-- **Error Tracking**: Sentry
-- **Logging**: Winston with structured JSON logs
-- **APM**: Built-in performance monitoring
-- **Health Checks**: `/health` and `/ready` endpoints
+See [📡 Observability & Ops](#📡-observability--ops) for the files that configure telemetry. At runtime:
+
+- **Application Metrics**: `backend/src/services/metricsService.js` exports Prometheus metrics scraped by Grafana dashboards in
+  `monitoring/`
+- **Error Tracking**: Sentry SDK is initialized in `backend/src/server.js`
+- **Logging**: Structured Winston logs stream to stdout and files for shipping to your log stack
+- **Health Checks**: `/health`, `/ready`, and `/metrics` endpoints drive load balancer probes and alerting rules
 
 ## 🚀 Deployment
 
@@ -233,7 +304,7 @@ helm upgrade --install supportcarr ./helm/supportcarr \
 
 ### Environment Variables
 
-See `.env.example` files in backend and frontend directories for required configuration.
+See [⚙️ Environment Variables](#⚙️-environment-variables) for the complete list of required configuration.
 
 ## 📈 Scaling
 

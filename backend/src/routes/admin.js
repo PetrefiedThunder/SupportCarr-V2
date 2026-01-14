@@ -36,10 +36,19 @@ router.get('/rescues', asyncHandler(async (req, res) => {
 // Ban user
 router.post('/users/:id/ban', asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id);
+
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      error: 'User not found',
+    });
+  }
+
   user.isBanned = true;
-  user.banReason = req.body.reason;
+  user.banReason = req.body.reason || 'No reason provided';
   user.bannedAt = new Date();
   await user.save();
+
   res.json({ success: true, message: 'User banned' });
 }));
 
